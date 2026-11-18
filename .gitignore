@@ -1,0 +1,19 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+docs/design-ref/
+*.apk
+parallax-connect-qr.png
+
+# Local research, device captures, and signing material
+docs/*
+!docs/parallax.png
+*.jks
+*.keystore
+*.p12
+.env
+.env.*

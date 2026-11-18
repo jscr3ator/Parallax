@@ -1,0 +1,35 @@
+data: {"id":"evt_example1","created":1794970258814,"type":"session.inbox.enqueued","data":{"inboxID":"msg_example2","sessionID":"ses_example3","item":{"type":"user","payload":{"text":"Use the bash tool to run: echo hi. Then reply with exactly: done"},"delivery":"steer"}},"durable":{"aggregateID":"ses_example3","seq":1,"version":1}}
+
+data: {"id":"evt_example4","created":1794970258816,"type":"session.execution.started","data":{"sessionID":"ses_example3"},"durable":{"aggregateID":"ses_example3","seq":2,"version":1}}
+
+data: {"id":"evt_example5","created":1794970258828,"type":"session.inbox.delivered","data":{"sessionID":"ses_example3","inboxID":"msg_example2"},"durable":{"aggregateID":"ses_example3","seq":4,"version":1}}
+
+data: {"id":"evt_example6","created":1794970264861,"type":"session.step.started","data":{"sessionID":"ses_example3","agent":"build","model":{"id":"deepseek-v4.1-flash","providerID":"opencode-go","variant":"default"},"assistantMessageID":"msg_example7","started":1794970258844},"durable":{"aggregateID":"ses_example3","seq":5,"version":1}}
+
+data: {"id":"evt_example8","created":1794970264864,"type":"session.tool.input.started","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example7","id":"call_example9","name":"shell"},"durable":{"aggregateID":"ses_example3","seq":6,"version":1}}
+
+data: {"id":"evt_example10","created":1794970265074,"type":"session.tool.input.ended","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example7","id":"call_example9","text":"{\"command\":\"echo hi\"}"},"durable":{"aggregateID":"ses_example3","seq":7,"version":1}}
+
+data: {"id":"evt_example11","created":1794970265076,"type":"session.tool.called","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example7","id":"call_example9","input":{"command":"echo hi"},"executed":false},"durable":{"aggregateID":"ses_example3","seq":8,"version":1}}
+
+data: {"id":"evt_example12","created":1794970265078,"type":"session.step.streamed","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example7"},"durable":{"aggregateID":"ses_example3","seq":9,"version":1}}
+
+data: {"id":"evt_example13","created":1794970265088,"type":"session.tool.progress","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example7","id":"call_example9","metadata":{"shellID":"sh_example14"}}}
+
+data: {"id":"evt_example15","created":1794970265092,"type":"session.tool.success","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example7","id":"call_example9","content":[{"type":"text","text":"hi\n"}],"metadata":{"status":"completed","truncated":false,"exit":0},"executed":false},"durable":{"aggregateID":"ses_example3","seq":10,"version":2}}
+
+data: {"id":"evt_example16","created":1794970265094,"type":"session.step.ended","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example7","finish":"tool-calls","rawFinish":"tool_calls","tokens":{"input":6608,"output":39,"reasoning":0,"cache":{"read":2432,"write":0}},"cost":0},"durable":{"aggregateID":"ses_example3","seq":11,"version":1}}
+
+data: {"id":"evt_example17","created":1794970268412,"type":"session.step.started","data":{"sessionID":"ses_example3","agent":"build","model":{"id":"deepseek-v4.1-flash","providerID":"opencode-go","variant":"default"},"assistantMessageID":"msg_example18","started":1794970265105},"durable":{"aggregateID":"ses_example3","seq":12,"version":1}}
+
+data: {"id":"evt_example19","created":1794970268413,"type":"session.text.started","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example18","ordinal":0},"durable":{"aggregateID":"ses_example3","seq":13,"version":1}}
+
+data: {"id":"evt_example20","created":1794970268417,"type":"session.text.delta","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example18","ordinal":0,"delta":"done"}}
+
+data: {"id":"evt_example21","created":1794970268417,"type":"session.text.ended","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example18","ordinal":0,"text":"done"},"durable":{"aggregateID":"ses_example3","seq":14,"version":1}}
+
+data: {"id":"evt_example22","created":1794970268418,"type":"session.step.streamed","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example18"},"durable":{"aggregateID":"ses_example3","seq":15,"version":1}}
+
+data: {"id":"evt_example23","created":1794970268419,"type":"session.step.ended","data":{"sessionID":"ses_example3","assistantMessageID":"msg_example18","finish":"stop","rawFinish":"stop","tokens":{"input":132,"output":3,"reasoning":0,"cache":{"read":8960,"write":0}},"cost":0},"durable":{"aggregateID":"ses_example3","seq":16,"version":1}}
+
+data: {"id":"evt_example24","created":1794970268422,"type":"session.execution.succeeded","data":{"sessionID":"ses_example3"},"durable":{"aggregateID":"ses_example3","seq":17,"version":1}}
