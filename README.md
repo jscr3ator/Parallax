@@ -8,4 +8,6 @@ A pocket remote for OpenCode. Talk to your coding agents, queue follow-ups, and 
 
 **Connect.** Choose OpenCode and scan the QR from `opencode pair --remote`, or sign in with your OpenChamber address and password.
 
+IOS is on the roadmap!
+
 **Build.** With JDK 21 and the Android SDK installed, run `./gradlew assembleDebug`.
