@@ -90,5 +90,5 @@ class ConnectViewModel(private val repository: AgentRepository) : ViewModel() {
 /** Accepts "192.168.1.5:4096", "host:3000/" or a full URL; returns an origin with a scheme and no trailing slash. */
 internal fun normalizeUrl(raw: String): String {
     val t = raw.trim().trimEnd('/')
-    return if ("://" in t) t else "http://$t"
+    return if ("://" in t) t else "https://$t"
 }

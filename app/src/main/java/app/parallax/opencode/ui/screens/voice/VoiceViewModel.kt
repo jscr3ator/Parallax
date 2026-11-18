@@ -101,12 +101,7 @@ class VoiceViewModel(app: Application, private val repository: AgentRepository, 
     }
 
     private fun answerApproval(a: VoicePhase.Approval, lower: String) {
-        val decision = when {
-            lower.contains("always") -> PermissionDecision.ALWAYS
-            listOf("allow", "yes", "okay", "ok", "sure", "go ahead", "do it", "yep", "approve").any { lower.contains(it) } -> PermissionDecision.ONCE
-            listOf("deny", "no", "don't", "do not", "stop", "cancel", "nope", "reject").any { lower.contains(it) } -> PermissionDecision.REJECT
-            else -> null
-        }
+        val decision = voiceApproval(lower)
         if (decision == null) { engine.speak("Say allow, or deny.") { listen(a) }; return }
         val sid = _sessionId.value ?: return
         answeredRequests += a.requestId
@@ -280,3 +275,11 @@ internal fun voiceChunkEnd(text: String, from: Int, firstPhrase: Boolean = true)
     }
     return boundary
 }
+
+internal fun voiceApproval(transcript: String): PermissionDecision? =
+    when (transcript.trim().lowercase().trimEnd('.', '!', '?').trim().replace('’', '\'')) {
+        "allow", "allow once", "yes", "approve" -> PermissionDecision.ONCE
+        "always allow" -> PermissionDecision.ALWAYS
+        "deny", "no", "reject", "cancel", "stop", "don't allow", "do not allow" -> PermissionDecision.REJECT
+        else -> null
+    }

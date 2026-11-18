@@ -64,7 +64,7 @@ interface AgentRepository {
     suspend fun markViewed(sessionId: String)
 
     // --- requests ---
-    suspend fun replyPermission(sessionId: String, requestId: String, decision: PermissionDecision, message: String? = null)
+    suspend fun replyPermission(sessionId: String, requestId: String, decision: PermissionDecision, message: String? = null, serverId: String? = null)
     suspend fun replyForm(sessionId: String, formId: String, answers: Map<String, Any>)
     suspend fun cancelForm(sessionId: String, formId: String)
 

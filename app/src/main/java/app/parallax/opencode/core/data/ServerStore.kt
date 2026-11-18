@@ -1,6 +1,8 @@
 package app.parallax.opencode.core.data
 
 import android.content.Context
+import androidx.datastore.core.DataMigration
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -12,17 +14,26 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
 
-private val Context.store by preferencesDataStore("parallax")
+private val legacyServers = stringPreferencesKey("servers")
+private val encryptedServers = stringPreferencesKey("servers_encrypted")
+private val Context.store by preferencesDataStore("parallax", produceMigrations = {
+    listOf(object : DataMigration<Preferences> {
+        override suspend fun shouldMigrate(currentData: Preferences) = currentData[legacyServers] != null
+        override suspend fun migrate(currentData: Preferences): Preferences = currentData.toMutablePreferences().apply {
+            this[encryptedServers] = ServerCipher.encrypt(requireNotNull(currentData[legacyServers]))
+            remove(legacyServers)
+        }
+        override suspend fun cleanUp() = Unit
+    })
+})
 
 /**
  * The only state the phone keeps: which servers it knows, which one is active, and UI prefs.
  * Everything else (sessions, transcripts, MCP config, agents) lives on the server.
  *
- * Note: secrets are stored in app-private DataStore. Android's per-app sandbox protects them from
- * other apps; a Keystore-wrapped store is a planned hardening step.
+ * The saved server list is encrypted with a per-install Android Keystore key.
  */
 class ServerStore(private val context: Context) {
-    private val kServers = stringPreferencesKey("servers")
     private val kActive = stringPreferencesKey("active_server")
     private val kTheme = stringPreferencesKey("theme")
     private val kDevice = stringPreferencesKey("device_key")
@@ -30,8 +41,11 @@ class ServerStore(private val context: Context) {
 
     private val listSer = ListSerializer(ServerConfig.serializer())
 
+    private fun decodeServers(p: Preferences): List<ServerConfig> =
+        p[encryptedServers]?.let { ApiJson.decodeFromString(listSer, ServerCipher.decrypt(it)) } ?: emptyList()
+
     val servers: Flow<List<ServerConfig>> = context.store.data.map { p ->
-        p[kServers]?.let { runCatching { ApiJson.decodeFromString(listSer, it) }.getOrNull() } ?: emptyList()
+        decodeServers(p)
     }
     val activeServerId: Flow<String?> = context.store.data.map { it[kActive] }
     val theme: Flow<ThemeMode> = context.store.data.map { p ->
@@ -44,16 +58,16 @@ class ServerStore(private val context: Context) {
     }
 
     suspend fun upsert(server: ServerConfig) = context.store.edit { p ->
-        val list = p[kServers]?.let { runCatching { ApiJson.decodeFromString(listSer, it) }.getOrNull() } ?: emptyList()
+        val list = decodeServers(p)
         val next = list.filterNot { it.id == server.id } + server
-        p[kServers] = ApiJson.encodeToString(listSer, next)
+        p[encryptedServers] = ServerCipher.encrypt(ApiJson.encodeToString(listSer, next))
         if (p[kActive] == null) p[kActive] = server.id
     }
 
     suspend fun remove(serverId: String) = context.store.edit { p ->
-        val list = p[kServers]?.let { runCatching { ApiJson.decodeFromString(listSer, it) }.getOrNull() } ?: emptyList()
+        val list = decodeServers(p)
         val next = list.filterNot { it.id == serverId }
-        p[kServers] = ApiJson.encodeToString(listSer, next)
+        p[encryptedServers] = ServerCipher.encrypt(ApiJson.encodeToString(listSer, next))
         if (p[kActive] == serverId) {
             if (next.isEmpty()) p.remove(kActive) else p[kActive] = next.first().id
         }

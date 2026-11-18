@@ -37,10 +37,27 @@ val ApiJson = Json {
     isLenient = true
 }
 
+internal fun privateHttpHost(host: String): Boolean {
+    if (host == "localhost" || host == "::1") return true
+    if (':' in host) return host.startsWith("fc", true) || host.startsWith("fd", true)
+    val parts = host.split('.').map { it.toIntOrNull() ?: return false }
+    if (parts.size != 4 || parts.any { it !in 0..255 }) return false
+    return parts[0] in setOf(10, 127) || (parts[0] == 172 && parts[1] in 16..31) ||
+        (parts[0] == 192 && parts[1] == 168) || (parts[0] == 100 && parts[1] in 64..127)
+}
+
 private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
 /** Shared OkHttp base. SSE needs no read timeout; REST calls get one per-call via [ApiClient]. */
 val BaseHttp: OkHttpClient = OkHttpClient.Builder()
+    .followRedirects(false)
+    .addInterceptor { chain ->
+        val url = chain.request().url
+        if (!url.isHttps && !privateHttpHost(url.host)) {
+            throw IOException("Use HTTPS for this server. HTTP is limited to private network addresses.")
+        }
+        chain.proceed(chain.request())
+    }
     .connectTimeout(10, TimeUnit.SECONDS)
     .readTimeout(0, TimeUnit.SECONDS)
     .pingInterval(20, TimeUnit.SECONDS)

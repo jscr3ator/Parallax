@@ -30,7 +30,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         ParallaxApp.container.appScope.launch {
             val sent = try {
                 withTimeoutOrNull(REPLY_TIMEOUT_MS) {
-                    ParallaxApp.container.repository.replyPermission(sessionId, requestId, decision)
+                    ParallaxApp.container.repository.replyPermission(sessionId, requestId, decision, serverId = serverId)
                     true
                 } ?: false
             } catch (_: Throwable) {

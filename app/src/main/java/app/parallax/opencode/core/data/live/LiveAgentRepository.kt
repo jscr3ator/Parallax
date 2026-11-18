@@ -312,14 +312,21 @@ class LiveAgentRepository(
         requestId: String,
         decision: PermissionDecision,
         message: String?,
+        serverId: String?,
     ) = io {
-        requireClient().post(
+        val client = if (serverId == null) requireClient() else {
+            val origin = store.servers.first().firstOrNull { it.id == serverId }
+                ?: throw RepoException("This server is no longer saved.")
+            ApiClient(origin)
+        }
+        client.post(
             "/api/session/$sessionId/permission/$requestId/reply",
             buildJsonObject {
                 put("decision", decision.wire)
                 message?.let { put("message", it) }
             },
         )
+        if (activeServer.value?.id != client.server.id) return@io
         liveState(sessionId).update { state ->
             state.copy(
                 items = state.items.filterNot {

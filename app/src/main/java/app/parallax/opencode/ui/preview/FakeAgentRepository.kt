@@ -379,7 +379,7 @@ class FakeAgentRepository : AgentRepository {
     }
 
     // --- requests ---
-    override suspend fun replyPermission(sessionId: String, requestId: String, decision: PermissionDecision, message: String?) {
+    override suspend fun replyPermission(sessionId: String, requestId: String, decision: PermissionDecision, message: String?, serverId: String?) {
         val f = flowFor(sessionId)
         f.value = f.value.filterNot { it is TranscriptItem.Permission && it.request.id == requestId } +
             TranscriptItem.Notice("n-$requestId", "Permission ${decision.name.lowercase()}: $requestId")

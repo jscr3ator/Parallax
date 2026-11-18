@@ -31,7 +31,7 @@ object ServerAuth {
         put("deviceName", Build.MODEL)
         put("devicePlatform", "android")
         put("deviceModel", "${Build.MANUFACTURER} ${Build.MODEL}")
-        put("appVersion", "0.1.0")
+        put("appVersion", "0.1.1")
         put("dedupeKey", dedupeKey)
     }
 

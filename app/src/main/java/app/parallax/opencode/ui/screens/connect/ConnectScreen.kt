@@ -152,7 +152,8 @@ fun ConnectScreen(
                     Text("On your computer, run opencode pair --remote.", style = ParallaxTheme.type.bodySmall, color = c.textMuted,
                         modifier = Modifier.padding(vertical = Space.sm))
                     Spacer(Modifier.height(Space.sm))
-                    AiryField(value = opUrl, onValue = { opUrl = it }, hint = "10.0.0.104:4096")
+                    AiryField(value = opUrl, onValue = { opUrl = it }, hint = "https://your-server")
+                    if (opUrl.startsWith("http://", ignoreCase = true)) Text("HTTP sends credentials unencrypted. Use only on a trusted private network.", style = ParallaxTheme.type.bodySmall, color = c.textMuted)
                     Spacer(Modifier.height(Space.sm))
                     AiryPasswordField(value = opPassword, onValue = { opPassword = it }, visible = opPwVisible, onToggle = { opPwVisible = !opPwVisible })
                     Spacer(Modifier.height(Space.md))
@@ -174,7 +175,8 @@ fun ConnectScreen(
                 }
                 if (mode == Mode.OPENCHAMBER) {
                     Spacer(Modifier.height(Space.lg))
-                    AiryField(value = ocUrl, onValue = { ocUrl = it }, hint = "10.0.0.104:3000")
+                    AiryField(value = ocUrl, onValue = { ocUrl = it }, hint = "https://your-server")
+                    if (ocUrl.startsWith("http://", ignoreCase = true)) Text("HTTP sends credentials unencrypted. Use only on a trusted private network.", style = ParallaxTheme.type.bodySmall, color = c.textMuted)
                     Spacer(Modifier.height(Space.sm))
                     AiryPasswordField(value = ocPassword, onValue = { ocPassword = it }, visible = ocPwVisible, onToggle = { ocPwVisible = !ocPwVisible })
                     Spacer(Modifier.height(Space.md))
