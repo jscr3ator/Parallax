@@ -43,7 +43,10 @@ const ICONS = {
   out: "M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4",
   bell: "M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0",
   refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6",
+  menu: "M4 7h16M4 12h16M4 17h16",
   steps: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01",
+  sliders: "M3 8h5M12 8h9M3 16h10M17 16h4M10 10a2 2 0 1 0 0-4 2 2 0 1 0 0 4M15 18a2 2 0 1 0 0-4 2 2 0 1 0 0 4",
+  x: "M6 6l12 12M18 6L6 18",
 };
 const icon = (name) => {
   const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -160,6 +163,50 @@ const session = {
   },
   clear() { try { sessionStorage.removeItem("px.auth"); } catch {} store.set("auth", null); },
 };
+
+// ------------------------------------------------------------------ prefs
+
+const PREFS_DEFAULT = {
+  theme: "system", chat: "grok", density: "comfortable", glow: true, sidebar: "open",
+  accent: "#5B6CF0", fontScale: 1, radiusScale: 1, showMascots: true, sendOnEnter: true,
+};
+const ACCENTS = ["#5B6CF0", "#8B5CF6", "#0EA5E9", "#10B981", "#F59E0B", "#EF4444", "#EC4899", "#111111"];
+
+function readPrefs() {
+  const saved = store.get("prefs", null);
+  const p = { ...PREFS_DEFAULT, ...(saved && typeof saved === "object" ? saved : {}) };
+  if (!saved) {
+    // One-time migration of the legacy "theme"/"sidebar" keys.
+    const legacyTheme = store.get("theme", null);
+    const legacySidebar = store.get("sidebar", null);
+    if (legacyTheme === "light" || legacyTheme === "dark") p.theme = legacyTheme;
+    if (legacySidebar === "rail" || legacySidebar === "open") p.sidebar = legacySidebar;
+    store.set("prefs", p);
+    store.set("theme", null);
+    store.set("sidebar", null);
+  }
+  return p;
+}
+
+const prefs = readPrefs();
+
+/** Push prefs onto <html> as attributes + CSS variables. */
+function applyPrefs() {
+  const root = document.documentElement;
+  if (prefs.theme === "system") delete root.dataset.theme;
+  else root.dataset.theme = prefs.theme === "light" ? "light" : "dark";
+  root.dataset.chat = prefs.chat === "muse" ? "muse" : "grok";
+  root.dataset.density = prefs.density === "compact" ? "compact" : "comfortable";
+  root.dataset.glow = prefs.glow ? "on" : "off";
+  root.dataset.sidebar = prefs.sidebar === "rail" ? "rail" : "open";
+  if (prefs.showMascots) delete root.dataset.mascots;
+  else root.dataset.mascots = "off";
+  root.style.setProperty("--accent", prefs.accent);
+  root.style.setProperty("--font-scale", String(prefs.fontScale));
+  root.style.setProperty("--radius-scale", String(prefs.radiusScale));
+}
+
+function savePrefs() { store.set("prefs", prefs); applyPrefs(); }
 
 // ------------------------------------------------------------------ state
 
@@ -600,8 +647,9 @@ function render() {
   app.replaceChildren();
   if (!S.auth) return renderConnect();
   const shell = h("div.shell", { id: "shell" },
-    h("aside.side", { id: "side" }, h("div", { id: "sideTop" }), searchBox(), h("div.list", { id: "list" })),
+    h("aside.side", { id: "side" }, h("div", { id: "sideTop" }), searchBox(), h("div.list", { id: "list" }), h("div.side-foot", { id: "sideFoot" })),
     h("main.main", { id: "main" }, h("div.head", { id: "head" }), h("div.scroll", { id: "scroll" }), composer()),
+    h("div.nav-scrim", { id: "navScrim", on: { click: () => closeNav() } }),
   );
   app.append(shell);
   renderSide();
@@ -662,38 +710,85 @@ function connectHint() {
     (S.allowAny ? "" : " Public addresses need --allow-any.");
 }
 
+function setSidebar(v) { prefs.sidebar = v === "rail" ? "rail" : "open"; savePrefs(); }
+function toggleSidebar() { setSidebar(prefs.sidebar === "rail" ? "open" : "rail"); renderSideTop(); }
+function closeNav() { document.body.classList.remove("side-open"); }
+
 function renderSideTop() {
   const el = $("#sideTop");
-  if (!el) return;
-  const label = serverLabel();
-  const status = S.conn === "live" ? "Live" : S.conn === "offline" ? "Reconnecting…" : "Connecting…";
-  const avatar = h("button.avatar", { title: "Menu", on: { click: (e) => settingsMenu(e.currentTarget) } }, S.auth.kind === "openchamber" ? "OC" : "O");
-  el.replaceChildren(h("div.side-top", avatar,
-    h("div.who", h("b", S.auth.kind === "openchamber" ? "OpenChamber" : "opencode"),
-      h("small", h("span.dot" + (S.conn === "live" ? ".live" : S.conn === "offline" ? ".warn" : "")), `${status} · ${label}`)),
-    h("button.circle.ink", { title: "New chat", on: { click: () => openSession(null) } }, icon("plus"))));
+  if (el) {
+    const rail = prefs.sidebar === "rail";
+    const nav = h("nav.side-nav",
+      h("button.nav", { title: "New chat", on: { click: () => { closeNav(); openSession(null); } } }, icon("edit"), h("span", "New chat")),
+      h("button.nav", { title: "Search", on: { click: () => {
+        if (prefs.sidebar === "rail") setSidebar("open");
+        renderSideTop();
+        if (matchMedia("(max-width: 820px)").matches) document.body.classList.add("side-open");
+        openSearch();
+      } } }, icon("search"), h("span", "Search")),
+      h("button.nav", { title: "Running", on: { click: () => {
+        const list = $("#list");
+        if (!list) return;
+        const t = list.querySelector('[data-sec="running"]');
+        if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
+        else list.scrollTo({ top: 0, behavior: "smooth" });
+      } } }, icon("bolt"), h("span", "Running")));
+    el.replaceChildren(
+      h("div.brand-row",
+        mascot(22, "parallax"),
+        h("span.brand-name", "Parallax"),
+        h("button.collapse", { title: rail ? "Expand sidebar" : "Collapse sidebar", on: { click: toggleSidebar } }, rail ? "»" : "«")),
+      nav);
+  }
+  const foot = $("#sideFoot");
+  if (foot) {
+    const status = S.conn === "live" ? "Live" : S.conn === "offline" ? "Reconnecting…" : "Connecting…";
+    foot.replaceChildren(
+      h("button.avatar", { title: "Menu", on: { click: (e) => settingsMenu(e.currentTarget) } }, S.auth.kind === "openchamber" ? "OC" : "O"),
+      h("div.conn", h("span.conn-status", h("span.dot" + (S.conn === "live" ? ".live" : S.conn === "offline" ? ".warn" : "")), status),
+        h("small.conn-server", serverLabel())));
+  }
 }
 
 function searchBox() {
-  const input = h("input", { placeholder: "Search chats", value: S.query, on: { input: (e) => { S.query = e.target.value; renderList(); } } });
-  return h("div.search", icon("search"), input);
+  const input = h("input", {
+    placeholder: "Search chats", value: S.query,
+    on: {
+      input: (e) => { S.query = e.target.value; renderList(); },
+      blur: () => { if (!S.query.trim()) closeSearch(); },
+      keydown: (e) => { if (e.key === "Escape") { e.target.blur(); } },
+    },
+  });
+  return h("div.search" + (S.query ? "" : ".hidden"), icon("search"), input);
+}
+
+function openSearch() {
+  const box = $(".search");
+  if (!box) return;
+  box.classList.remove("hidden");
+  const inp = $(".search input");
+  if (inp) { inp.focus(); inp.select?.(); }
+}
+
+function closeSearch() {
+  const box = $(".search");
+  if (box && !S.query.trim()) box.classList.add("hidden");
 }
 
 function renderSide() { renderSideTop(); renderList(); updateTitle(); }
 
 function sessionRow(s) {
   const need = needsYou(s.id);
-  const sub = need ? "Needs your OK" : s.running ? "Working…" : s.outcome === "failed" ? "Run failed" : modelName(s.model) || prettyDir(s.dir);
+  const st = need ? "need" : s.running ? "run" : (s.unread && s.id !== S.current && Date.now() - s.updated < 86400000) ? "unread" : "idle";
   return h("button.row" + (s.id === S.current ? ".on" : ""), {
+    title: s.title,
     on: {
-      click: () => openSession(s.id),
+      click: () => { closeNav(); openSession(s.id); },
       contextmenu: (e) => { e.preventDefault(); sessionMenu(e.currentTarget, s); },
     },
   },
-  mascot(40, s.id, { busy: s.running, need, live: s.running }),
-  h("span.t", h("b", s.title), h("small", sub)),
-  h("span.when", ago(s.updated)),
-  s.unread && !need && s.id !== S.current && Date.now() - s.updated < 86400000 ? h("span.unread") : null);
+  h("span.sdot." + st),
+  h("span.row-t", s.title));
 }
 
 function renderList() {
@@ -716,15 +811,17 @@ function section(sec) {
   const closed = S.closed.has(sec.key);
   const count = sec.loose.length + sec.folders.reduce((n, f) => n + f.sessions.length, 0);
   const head = h("button.sec-h" + (closed ? ".closed" : ""), {
+    title: sec.title,
     on: { click: () => { closed ? S.closed.delete(sec.key) : S.closed.add(sec.key); store.set("closed", [...S.closed]); renderList(); } },
-  }, icon("chev"), sec.color ? h("span.sw", { style: `background:${sec.color}` }) : null, h("span", sec.title), h("span.n", String(count)));
-  if (closed) return h("div", head);
+  }, icon("chev"), sec.color ? h("span.sw", { style: `background:${sec.color}` }) : null, h("span.sec-t", sec.title), h("span.n", String(count)));
+  const wrap = h("div.sec", { "data-sec": sec.key }, head);
+  if (closed) return wrap;
   const body = [];
   for (const g of sec.folders) {
     const fk = `${sec.key}/f/${g.folder.id}`;
     const fclosed = S.closed.has(fk);
-    body.push(h("button.folder-h", { on: { click: () => { fclosed ? S.closed.delete(fk) : S.closed.add(fk); store.set("closed", [...S.closed]); renderList(); } } },
-      icon("folder"), g.folder.name, h("span", { style: "margin-left:auto;color:var(--faint)" }, String(g.sessions.length))));
+    body.push(h("button.folder-h", { title: g.folder.name, on: { click: () => { fclosed ? S.closed.delete(fk) : S.closed.add(fk); store.set("closed", [...S.closed]); renderList(); } } },
+      icon("folder"), h("span.sec-t", g.folder.name), h("span", { style: "margin-left:auto;color:var(--faint)" }, String(g.sessions.length))));
     if (!fclosed) body.push(h("div.folder-body", g.sessions.map(sessionRow)));
   }
   const limit = S.expanded.has(sec.key) ? Infinity : 8;
@@ -732,13 +829,15 @@ function section(sec) {
   if (sec.loose.length > limit) {
     body.push(h("button.more", { on: { click: () => { S.expanded.add(sec.key); renderList(); } } }, `Show ${sec.loose.length - limit} more`));
   }
-  return h("div", head, body);
+  wrap.append(...body);
+  return wrap;
 }
 
 function renderMain() {
   const shell = $("#shell");
   if (!shell) return;
   shell.classList.toggle("in-chat", S.current != null || S.composeHome === true);
+  document.body.classList.toggle("is-home", S.current == null);
   renderHead();
   renderThread();
   syncComposer();
@@ -747,17 +846,21 @@ function renderMain() {
 function renderHead() {
   const el = $("#head");
   if (!el) return;
-  const back = h("button.circle.back", { title: "Back", on: { click: () => { S.current = null; S.composeHome = false; renderMain(); renderList(); } } }, icon("back"));
+  const menuBtn = h("button.circle.icon-btn.menu-btn", { title: "Menu", on: { click: () => document.body.classList.toggle("side-open") } }, icon("menu"));
+  const back = h("button.circle.icon-btn.back", { title: "Back", on: { click: () => { S.current = null; S.composeHome = false; closeNav(); renderMain(); renderList(); } } }, icon("back"));
   const s = S.sessions.find((x) => x.id === S.current);
   if (!s) {
-    el.replaceChildren(back, h("div.t", h("b", "New chat"), h("small", prettyDir(S.dir) || "Pick a project below")));
+    el.replaceChildren(menuBtn, back, h("div.t", h("b", "New chat"), h("small", prettyDir(S.dir) || "Pick a project below")), h("span.hsp"),
+      h("button.circle.icon-btn", { title: "New chat", on: { click: () => { closeNav(); openSession(null); } } }, icon("edit")));
     return;
   }
   const need = needsYou(s.id);
   const status = need ? "Needs your OK" : s.running ? "Working…" : modelName(s.model) || "Ready";
-  el.replaceChildren(back, mascot(40, s.id, { busy: s.running, need, live: s.running }),
-    h("div.t", h("b", s.title), h("small", h("span.dot" + (s.running ? ".live" : need ? ".warn" : "")), status, " · ", prettyDir(s.dir))),
-    h("button.circle", { title: "Chat actions", on: { click: (e) => sessionMenu(e.currentTarget, s) } }, icon("more")));
+  el.replaceChildren(menuBtn, back,
+    h("div.t", h("b", s.title), h("small", h("span.dot" + (s.running ? ".live" : need ? ".warn" : "")), status)),
+    h("span.hsp"),
+    h("button.circle.icon-btn", { title: "Chat actions", on: { click: (e) => sessionMenu(e.currentTarget, s) } }, icon("more")),
+    h("button.circle.icon-btn", { title: "New chat", on: { click: () => { closeNav(); openSession(null); } } }, icon("edit")));
 }
 
 function friendlyStep(part) {
@@ -844,11 +947,9 @@ function approvalCard(p) {
 
 function homeView() {
   const ideas = ["Fix the failing tests", "Explain this codebase", "Review my last commit"];
-  return h("div.home", { style: "min-height:100%" },
-    mascot(104, "parallax", { live: S.conn === "live" }),
-    h("h2", "What should we build?"),
-    h("p", `${S.auth.kind === "openchamber" ? "OpenChamber" : "opencode"} · ${serverLabel()}`),
-    h("div.chips", ideas.map((t) => h("button.pill", { on: { click: () => { const ta = $("#prompt"); ta.value = t; ta.dispatchEvent(new Event("input")); ta.focus(); } } }, t))));
+  return h("div.home",
+    h("div.home-brand", mascot(64, "parallax", { live: S.conn === "live" }), h("h1", "Parallax")),
+    h("div.home-chips", ideas.map((t) => h("button.pill", { on: { click: () => { const ta = $("#prompt"); if (!ta) return; ta.value = t; ta.dispatchEvent(new Event("input")); ta.focus(); } } }, t))));
 }
 
 // ------------------------------------------------------------------ composer
@@ -856,7 +957,11 @@ function homeView() {
 function composer() {
   const ta = h("textarea", { id: "prompt", rows: 1, placeholder: "Ask anything", on: {
     input: () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.4) + "px"; syncComposer(); },
-    keydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); submit(); } },
+    keydown: (e) => {
+      if (e.key !== "Enter" || e.isComposing || matchMedia("(pointer: coarse)").matches) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (prefs.sendOnEnter ? (!e.shiftKey && !mod) : mod) { e.preventDefault(); submit(); }
+    },
   } });
   const proj = h("select", { id: "projSel", title: "Project", on: { change: (e) => { S.dir = e.target.value || null; store.set("dir", S.dir); renderHead(); } } });
   const model = h("select", { id: "modelSel", title: "Model", on: { change: (e) => {
@@ -866,7 +971,8 @@ function composer() {
     if (S.current && S.model) api("POST", `/api/session/${encodeURIComponent(S.current)}/model`, { model: S.model }).catch((x) => toast(x.message));
   } } });
   const send = h("button.send", { id: "sendBtn", title: "Send", on: { click: () => submit() } }, icon("send"));
-  return h("div.composer-wrap", h("div.composer", ta, h("div.bar", proj, model, h("span.sp"), send)));
+  return h("div.composer-wrap", h("div.composer", ta,
+    h("div.bar", h("span.proj-chip", icon("plus"), proj), h("span.sp"), h("span.model-chip", model), send)));
 }
 
 function syncComposer() {
@@ -1000,14 +1106,13 @@ function folderMenu(anchor, s) {
 }
 
 function settingsMenu(anchor) {
-  const theme = document.documentElement.dataset.theme || "";
   const items = [
     { label: `${S.auth.kind === "openchamber" ? "OpenChamber" : "opencode"} · ${serverLabel()}` },
     { icon: "refresh", text: "Refresh", run: () => refreshAll().then(() => toast("Up to date")).catch((e) => toast(e.message)) },
-    { icon: "moon", text: theme === "dark" ? "Light mode" : theme === "light" ? "Match system" : "Dark mode", run: () => {
-      const next = theme === "dark" ? "light" : theme === "light" ? "" : "dark";
-      if (next) document.documentElement.dataset.theme = next; else delete document.documentElement.dataset.theme;
-      store.set("theme", next || null);
+    { icon: "sliders", text: "Customize", run: () => openCustomize() },
+    { icon: "moon", text: prefs.theme === "dark" ? "Light mode" : prefs.theme === "light" ? "Match system" : "Dark mode", run: () => {
+      prefs.theme = prefs.theme === "dark" ? "light" : prefs.theme === "light" ? "system" : "dark";
+      savePrefs();
     } },
   ];
   if ("Notification" in window && Notification.permission === "default") {
@@ -1015,6 +1120,127 @@ function settingsMenu(anchor) {
   }
   items.push({ icon: "out", text: "Sign out", danger: true, run: () => signOut() });
   menu(anchor, items);
+}
+
+// ------------------------------------------------------------------ customize panel
+
+function closeCustomize() {
+  document.removeEventListener("keydown", customizeKey, true);
+  document.querySelector(".cscrim")?.remove();
+  document.querySelector(".customize")?.remove();
+}
+
+function customizeKey(e) {
+  if (e.key === "Escape") { e.preventDefault(); closeCustomize(); }
+}
+
+function openCustomize() {
+  closeCustomize();
+  const syncers = [];
+  const sync = () => syncers.forEach((fn) => fn());
+  const sec = (label, control) => h("div.cz-sec", h("div.cz-lbl", label), control);
+
+  const segmented = (key, opts) => {
+    const wrap = h("div.seg", { role: "group" });
+    const btns = opts.map(([val, text]) => h("button.seg-b", {
+      type: "button", on: { click: () => { prefs[key] = val; savePrefs(); sync(); } },
+    }, text));
+    wrap.append(...btns);
+    syncers.push(() => btns.forEach((b, i) => {
+      const on = prefs[key] === opts[i][0];
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }));
+    return wrap;
+  };
+
+  const card = (val, name, desc, mode) => {
+    const btn = h("button.cz-card" + (mode === "muse" ? ".muse" : ""), {
+      type: "button", "aria-label": `${name} chat style`,
+      on: { click: () => { prefs.chat = val; savePrefs(); sync(); } },
+    },
+    h("span.cz-mock",
+      h("span.m-u"),
+      h("span.m-a", h("i"), h("i"), h("i"))),
+    h("span.cz-card-n", name),
+    h("small", desc));
+    syncers.push(() => btn.classList.toggle("on", prefs.chat === val));
+    return btn;
+  };
+
+  const swatches = ACCENTS.map((c) => {
+    const b = h("button.sw", { type: "button", title: c, "aria-label": `Accent ${c}`, style: `background:${c}`, "data-accent": c.toLowerCase(),
+      on: { click: () => { prefs.accent = c; savePrefs(); sync(); } } });
+    return b;
+  });
+  const custom = h("input.sw-custom", {
+    type: "color", value: prefs.accent, title: "Custom accent", "aria-label": "Custom accent",
+    on: { input: (e) => { prefs.accent = e.target.value; savePrefs(); sync(); } },
+  });
+  const swatchWrap = h("div.cz-swatches", ...swatches, custom);
+  syncers.push(() => {
+    const accent = String(prefs.accent || "").toLowerCase();
+    swatches.forEach((b) => b.classList.toggle("on", b.dataset.accent === accent));
+    custom.classList.toggle("on", !ACCENTS.some((c) => c.toLowerCase() === accent));
+    if (document.activeElement !== custom && custom.value.toLowerCase() !== accent) custom.value = prefs.accent;
+  });
+
+  const range = (key, min, max, step, left, right, leftCls = "", rightCls = "") => {
+    const inp = h("input.range", {
+      type: "range", min: String(min), max: String(max), step: String(step), value: String(prefs[key]),
+      "aria-label": key === "fontScale" ? "Text size" : "Corner roundness",
+      on: { input: (e) => {
+        const v = +e.target.value;
+        prefs[key] = step < 0.1 ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10;
+        savePrefs();
+      } },
+    });
+    syncers.push(() => { inp.value = String(prefs[key]); });
+    return h("div.cz-range-row", h("span.end" + leftCls, left), inp, h("span.end" + rightCls, right));
+  };
+
+  const switchCtl = (get, set) => {
+    const b = h("button.switch", { type: "button", role: "switch" }, h("span.knob"));
+    b.addEventListener("click", () => { set(!get()); savePrefs(); sync(); });
+    syncers.push(() => { b.classList.toggle("on", !!get()); b.setAttribute("aria-checked", String(!!get())); });
+    return b;
+  };
+  const toggleRow = (label, key) => h("div.cz-row", h("span.cz-row-l", label), switchCtl(() => prefs[key], (v) => { prefs[key] = v; }));
+
+  const reset = () => {
+    Object.assign(prefs, PREFS_DEFAULT);
+    savePrefs(); sync(); renderSideTop();
+    toast("Defaults restored");
+  };
+
+  const sheet = h("aside.customize", { role: "dialog", "aria-modal": "true", "aria-label": "Customize" },
+    h("div.cz-head",
+      h("h2", "Customize"),
+      h("button.cz-x", { type: "button", title: "Close", "aria-label": "Close", on: { click: closeCustomize } }, icon("x"))),
+    h("div.cz-body",
+      sec("Appearance", segmented("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])),
+      sec("Chat style", h("div.cz-cards",
+        card("grok", "Grok", "Plain replies", "grok"),
+        card("muse", "Muse", "Bubbles", "muse"))),
+      sec("Accent", swatchWrap),
+      sec("Text size", range("fontScale", 0.85, 1.25, 0.05, "A", "A", ".a-sm", ".a-lg")),
+      sec("Corners", range("radiusScale", 0.5, 1.5, 0.1, "Sharp", "Round")),
+      sec("Density", segmented("density", [["comfortable", "Comfortable"], ["compact", "Compact"]])),
+      h("div.cz-sec",
+        toggleRow("Background glow", "glow"),
+        toggleRow("Show mascots", "showMascots"),
+        h("div.cz-row", h("span.cz-row-l", "Collapse sidebar"),
+          switchCtl(() => prefs.sidebar === "rail", (v) => { prefs.sidebar = v ? "rail" : "open"; renderSideTop(); })),
+        toggleRow("Send with Enter", "sendOnEnter"))),
+    h("div.cz-foot",
+      h("button.cz-reset", { type: "button", on: { click: reset } }, "Reset to defaults")));
+
+  const scrim = h("div.cscrim", { on: { click: closeCustomize } });
+  document.body.append(scrim, sheet);
+  sync();
+  requestAnimationFrame(() => { scrim.classList.add("open"); sheet.classList.add("open"); });
+  document.addEventListener("keydown", customizeKey, true);
+  sheet.querySelector(".cz-x")?.focus();
 }
 
 // ------------------------------------------------------------------ names
@@ -1071,8 +1297,7 @@ document.addEventListener("visibilitychange", () => {
 });
 setInterval(() => { if (S.auth && !document.hidden) renderList(); }, 60000); // keep "5m ago" fresh
 
-const savedTheme = store.get("theme", null);
-if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+applyPrefs();
 
 fetch("/_px/info").then((r) => r.json()).then((j) => {
   S.defaultBackend = j.backend ? new URL(j.backend).origin : "";
