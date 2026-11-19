@@ -1,0 +1,9 @@
+{
+  "name": "Parallax",
+  "short_name": "Parallax",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAFAFB",
+  "theme_color": "#FAFAFB",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

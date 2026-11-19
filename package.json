@@ -1,0 +1,10 @@
+{
+  "name": "parallax-web",
+  "version": "0.1.0",
+  "description": "Parallax web client: use your opencode or OpenChamber agents from any browser.",
+  "private": true,
+  "bin": { "parallax-web": "web/server.mjs" },
+  "files": ["web"],
+  "engines": { "node": ">=18" },
+  "scripts": { "web": "node web/server.mjs" }
+}
