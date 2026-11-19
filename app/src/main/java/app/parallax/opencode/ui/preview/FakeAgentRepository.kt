@@ -363,6 +363,11 @@ class FakeAgentRepository : AgentRepository {
         updateSession(sessionId) { it.copy(title = title, updatedAt = now()) }
     }
 
+    override suspend fun archiveSession(sessionId: String, archived: Boolean) { deleteSession(sessionId) }
+    override suspend fun workspace() = app.parallax.opencode.core.model.Workspace(emptyList(), emptyList())
+    override suspend fun moveToFolder(sessionId: String, scopeKey: String, folderId: String?, fromFolderId: String?) {}
+    override suspend fun createFolder(scopeKey: String, name: String) = "f-" + System.currentTimeMillis()
+
     override suspend fun deleteSession(sessionId: String) {
         _sessions.update { it.filterNot { s -> s.id == sessionId } }
         transcripts.remove(sessionId)

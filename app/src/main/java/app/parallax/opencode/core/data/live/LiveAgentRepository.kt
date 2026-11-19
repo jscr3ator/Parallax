@@ -1,5 +1,6 @@
 package app.parallax.opencode.core.data.live
 
+import kotlinx.serialization.json.putJsonArray
 import android.content.Context
 import app.parallax.opencode.core.data.ServerStore
 import app.parallax.opencode.core.model.AgentOption
@@ -270,6 +271,89 @@ class LiveAgentRepository(
         Unit
     }
 
+    override suspend fun workspace(): app.parallax.opencode.core.model.Workspace = io {
+        val client = requireClient()
+        val isOc = activeServer.value?.kind == app.parallax.opencode.core.model.BackendKind.OPENCHAMBER
+        if (isOc) {
+            val settings = runCatching { client.get("/api/config/settings") as? JsonObject }.getOrNull()
+            val ocProjects = (settings?.get("projects")).asArrayOrNull().orEmpty().mapNotNull { e ->
+                val o = e as? JsonObject ?: return@mapNotNull null
+                val path = o.string("path") ?: return@mapNotNull null
+                app.parallax.opencode.core.model.WorkspaceProject(
+                    id = o.string("id") ?: path,
+                    name = o.string("label")?.ifBlank { null } ?: path.trimEnd('/').substringAfterLast('/'),
+                    path = path.trimEnd('/'),
+                    color = o.string("color"),
+                )
+            }
+            val snap = runCatching { client.get("/api/session-folders") as? JsonObject }.getOrNull()
+            val map = snap?.get("foldersMap") as? JsonObject
+            val folders = map?.entries.orEmpty().flatMap { (scope, arr) ->
+                arr.asArrayOrNull().orEmpty().mapNotNull { e ->
+                    val o = e as? JsonObject ?: return@mapNotNull null
+                    if (scope.startsWith("__archived__")) return@mapNotNull null
+                    app.parallax.opencode.core.model.SessionFolder(
+                        id = o.string("id") ?: return@mapNotNull null,
+                        name = o.string("name") ?: "Folder",
+                        scopeKey = scope,
+                        parentId = o.string("parentId"),
+                        sessionIds = o["sessionIds"].asArrayOrNull().orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content },
+                    )
+                }
+            }
+            val projects = ocProjects.ifEmpty { opencodeProjects(client) }
+            app.parallax.opencode.core.model.Workspace(projects, folders, chatsRoot = guessChatsRoot(), supportsFolders = snap != null)
+        } else {
+            app.parallax.opencode.core.model.Workspace(opencodeProjects(client), emptyList(), chatsRoot = guessChatsRoot())
+        }
+    }
+
+    private suspend fun opencodeProjects(client: ApiClient) = mapProjects(client.get("/api/project").data).map {
+        app.parallax.opencode.core.model.WorkspaceProject(it.id, it.name, it.directory.trimEnd('/'))
+    }
+
+    /** OpenChamber chats live in <root>/<yyyy-mm-dd>/session-<uuid>; derive <root> from any such session. */
+    private fun guessChatsRoot(): String? = _baseSessions.value.firstNotNullOfOrNull { s ->
+        val dir = s.directory?.trimEnd('/') ?: return@firstNotNullOfOrNull null
+        if (CHAT_DIR.matches(dir.substringAfterLast('/'))) dir.substringBeforeLast('/').substringBeforeLast('/') else null
+    }
+
+    override suspend fun moveToFolder(sessionId: String, scopeKey: String, folderId: String?, fromFolderId: String?) = io {
+        val change = buildJsonObject {
+            put("type", if (folderId != null) "assign" else "unassign")
+            put("scopeKey", scopeKey)
+            if (folderId != null) put("folderId", folderId)
+            putJsonArray("sessionIds") { add(kotlinx.serialization.json.JsonPrimitive(sessionId)) }
+            putJsonObject("from") { if (fromFolderId != null) put(sessionId, fromFolderId) else put(sessionId, kotlinx.serialization.json.JsonNull) }
+        }
+        requireClient().patch("/api/session-folders", buildJsonObject { putJsonArray("changes") { add(change) } })
+        Unit
+    }
+
+    override suspend fun createFolder(scopeKey: String, name: String): String = io {
+        val id = "folder-" + java.util.UUID.randomUUID().toString().take(12)
+        val change = buildJsonObject {
+            put("type", "create")
+            put("scopeKey", scopeKey)
+            putJsonObject("folder") {
+                put("id", id); put("name", name); put("parentId", kotlinx.serialization.json.JsonNull); put("createdAt", System.currentTimeMillis())
+            }
+        }
+        requireClient().patch("/api/session-folders", buildJsonObject { putJsonArray("changes") { add(change) } })
+        id
+    }
+
+    override suspend fun archiveSession(sessionId: String, archived: Boolean) = io {
+        requireClient().patch("/api/session/$sessionId", buildJsonObject { put("archived", archived) })
+        if (archived) {
+            _baseSessions.update { list -> list.filterNot { it.id == sessionId } }
+            revision.value++
+        } else {
+            activeServer.value?.let { s -> api?.let { refreshSessions(it, s.id) } }
+        }
+        Unit
+    }
+
     override suspend fun deleteSession(sessionId: String) = io {
         requireClient().delete("/api/session/$sessionId")
         _baseSessions.update { list -> list.filterNot { it.id == sessionId } }
@@ -483,11 +567,17 @@ class LiveAgentRepository(
 
     private suspend fun refreshSessions(client: ApiClient, serverId: String) {
         if (activeServer.value?.id != serverId) return
-        val array = client.get("/api/session", mapOf("limit" to "200")).data.asArrayOrNull()
-            ?: return
-        val list = array.mapNotNull { item ->
-            (item as? JsonObject)?.let { mapSession(it, serverId) }
-        }
+        // Everything OpenChamber shows: all pages of non-archived sessions (capped for sanity).
+        val list = mutableListOf<app.parallax.opencode.core.model.AgentSession>()
+        var cursor: String? = null
+        var pages = 0
+        do {
+            val res = client.get("/api/session", mapOf("limit" to "200", "archived" to "false", "cursor" to cursor)) as? JsonObject ?: break
+            val page = res["data"].asArrayOrNull() ?: break
+            page.mapNotNullTo(list) { item -> (item as? JsonObject)?.let { mapSession(it, serverId) } }
+            cursor = (res["cursor"] as? JsonObject)?.string("next")
+            pages++
+        } while (page.size >= 200 && cursor != null && pages < 10)
         _baseSessions.value = list.sortedByDescending { it.updatedAt }
         revision.value++
     }
@@ -631,6 +721,13 @@ class LiveAgentRepository(
 
         when (event.type) {
             "session.created" -> addCreatedSession(event, serverId)
+            "session.archived" -> {
+                if (sessionId != null) {
+                    _baseSessions.update { list -> list.filterNot { it.id == sessionId } }
+                    revision.value++
+                }
+            }
+            "session.unarchived" -> refreshSessions(client, serverId)
             "session.deleted" -> {
                 if (sessionId != null) {
                     _baseSessions.update { list -> list.filterNot { it.id == sessionId } }
@@ -887,3 +984,6 @@ internal fun shortTitle(prompt: String, max: Int = 48): String {
     val cut = one.take(max).substringBeforeLast(' ').ifBlank { one.take(max) }
     return cut.trimEnd(',', '.', ';', ':') + "…"
 }
+
+/** OpenChamber's per-chat directory name: session-<uuid>. */
+internal val CHAT_DIR = Regex("^session-[0-9a-fA-F-]{8,}$")

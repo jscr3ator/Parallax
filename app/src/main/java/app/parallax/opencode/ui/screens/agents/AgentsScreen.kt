@@ -1,5 +1,13 @@
 package app.parallax.opencode.ui.screens.agents
 
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Folder
+import app.parallax.opencode.ui.components.dirLeaf
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
 import app.parallax.opencode.ui.components.SegmentedControl
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -72,6 +80,11 @@ fun AgentsScreen(
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val showAll by vm.showAll.collectAsStateWithLifecycle()
     val hiddenCount by vm.hiddenCount.collectAsStateWithLifecycle()
+    val projects by vm.projects.collectAsStateWithLifecycle()
+    val workspace by vm.workspace.collectAsStateWithLifecycle()
+    val collapsed = remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
+    var actionTarget by remember { mutableStateOf<AgentSession?>(null) }
+    val expanded = remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val modelNames = rememberModelNames(repository)
@@ -152,7 +165,7 @@ fun AgentsScreen(
                             session = s,
                             modelName = displayModelName(s.model, modelNames),
                             onOpen = { onOpenSession(s.id) },
-                            onDelete = { vm.delete(s.id) },
+                            onDelete = { vm.archive(s.id) },
                             onRename = { renameTarget = s },
                             modifier = Modifier.animateItem(),
                         )
@@ -178,14 +191,83 @@ fun AgentsScreen(
                             session = s,
                             modelName = displayModelName(s.model, modelNames),
                             onOpen = { onOpenSession(s.id) },
-                            onDelete = { vm.delete(s.id) },
+                            onDelete = { vm.archive(s.id) },
                             onRename = { renameTarget = s },
                             modifier = Modifier.animateItem(),
                         )
                     }
                 }
 
-                if (recentEntries.isNotEmpty()) {
+                if (showAll && recent.isNotEmpty()) {
+                    // Synced with OpenChamber: its projects (own names, own order), its folders, and one Chats section.
+                    val sections = buildSections(recent, workspace)
+                    sections.forEach { sec ->
+                        val secOpen = collapsed[sec.key] != true
+                        item(key = "h-${sec.key}") {
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = Space.lg, bottom = Space.xs).animateItem()
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                                    .clickable { collapsed[sec.key] = secOpen }.padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (sec.kind == SidebarSection.Kind.CHATS) {
+                                    Icon(Icons.Rounded.ChatBubbleOutline, null, tint = ParallaxTheme.colors.textMuted, modifier = Modifier.size(20.dp))
+                                } else {
+                                    app.parallax.opencode.ui.components.ProjectTile(sec.path, size = 22.dp)
+                                }
+                                Spacer(Modifier.width(Space.sm))
+                                Text(sec.title, style = ParallaxTheme.type.label, color = ParallaxTheme.colors.text, modifier = Modifier.weight(1f), maxLines = 1)
+                                Text("${sec.total}", style = ParallaxTheme.type.caption, color = ParallaxTheme.colors.textFaint)
+                                Spacer(Modifier.width(4.dp))
+                                Icon(if (secOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = ParallaxTheme.colors.textFaint, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        if (!secOpen) return@forEach
+                        sec.folders.forEach { fg ->
+                            val fKey = "f-${fg.folder.id}"
+                            val fOpen = expanded[fKey] == true
+                            item(key = fKey) {
+                                Row(
+                                    Modifier.fillMaxWidth().animateItem().clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                                        .clickable { expanded[fKey] = !fOpen }.padding(start = 6.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(if (fOpen) Icons.Rounded.FolderOpen else Icons.Rounded.Folder, null, tint = ParallaxTheme.colors.textMuted, modifier = Modifier.size(22.dp))
+                                    Spacer(Modifier.width(Space.md))
+                                    Text(fg.folder.name, style = ParallaxTheme.type.body, color = ParallaxTheme.colors.text, modifier = Modifier.weight(1f), maxLines = 1)
+                                    Text("${fg.sessions.size}", style = ParallaxTheme.type.caption, color = ParallaxTheme.colors.textFaint)
+                                }
+                            }
+                            if (fOpen) items(fg.sessions, key = { "$fKey-${it.id}" }) { s ->
+                                SwipeableSessionRow(
+                                    session = s, modelName = displayModelName(s.model, modelNames),
+                                    onOpen = { onOpenSession(s.id) }, onDelete = { vm.archive(s.id) },
+                                    onRename = { actionTarget = s },
+                                    modifier = Modifier.animateItem().padding(start = Space.lg),
+                                )
+                            }
+                        }
+                        val lKey = "l-${sec.key}"
+                        val showAllLoose = expanded[lKey] == true
+                        val loose = if (showAllLoose) sec.loose else sec.loose.take(4)
+                        items(loose, key = { "$lKey-${it.id}" }) { s ->
+                            SwipeableSessionRow(
+                                session = s, modelName = displayModelName(s.model, modelNames),
+                                onOpen = { onOpenSession(s.id) }, onDelete = { vm.archive(s.id) },
+                                onRename = { actionTarget = s },
+                                modifier = Modifier.animateItem(),
+                            )
+                        }
+                        if (sec.loose.size > 4) item(key = "$lKey-more") {
+                            Text(
+                                if (showAllLoose) "Show less" else "Show ${sec.loose.size - 4} more",
+                                style = ParallaxTheme.type.bodySmall, color = ParallaxTheme.colors.accentText,
+                                modifier = Modifier.animateItem().clip(androidx.compose.foundation.shape.CircleShape)
+                                    .clickable { expanded[lKey] = !showAllLoose }.padding(horizontal = Space.sm, vertical = Space.sm),
+                            )
+                        }
+                    }
+                } else if (recentEntries.isNotEmpty()) {
                     var lastDay: String? = null
                     recentEntries.forEach { entry ->
                         val updated = if (entry is AgentSession) entry.updatedAt else (entry as List<*>).maxOf { (it as AgentSession).updatedAt }
@@ -216,7 +298,7 @@ fun AgentsScreen(
                                 session = s,
                                 modelName = displayModelName(s.model, modelNames),
                                 onOpen = { onOpenSession(s.id) },
-                                onDelete = { vm.delete(s.id) },
+                                onDelete = { vm.archive(s.id) },
                                 onRename = { renameTarget = s },
                                 modifier = Modifier.animateItem(),
                             )
@@ -241,6 +323,17 @@ fun AgentsScreen(
         }
     }
 
+    actionTarget?.let { target ->
+        SessionActionsSheet(
+            session = target,
+            workspace = workspace,
+            onDismiss = { actionTarget = null },
+            onRename = { actionTarget = null; renameTarget = target },
+            onArchive = { actionTarget = null; vm.archive(target.id) },
+            onMove = { folderId -> actionTarget = null; vm.moveToFolder(target, folderId) },
+            onNewFolder = { name -> actionTarget = null; vm.newFolderAndMove(target, name) },
+        )
+    }
     renameTarget?.let { target ->
         RenameDialog(
             current = target.title,

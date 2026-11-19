@@ -74,6 +74,8 @@ data class AgentSession(
     val error: String? = null,
     /** Started from Parallax (tagged `metadata.parallax = true` on the server). Others are desktop/TUI history. */
     val fromParallax: Boolean = false,
+    /** opencode project this session belongs to (OpenChamber groups by it). */
+    val projectId: String? = null,
 )
 
 enum class ToolStatus { PENDING, RUNNING, SUCCESS, FAILED }
@@ -203,3 +205,25 @@ data class ParallelLaunch(
 )
 
 data class UsageSummary(val label: String, val usedFraction: Float?, val detail: String?)
+
+
+/** A project as OpenChamber shows it (its own name), or an opencode project on a bare server. */
+data class WorkspaceProject(val id: String, val name: String, val path: String, val color: String? = null)
+
+/** An OpenChamber chat folder. [scopeKey] is the project root (or the chats root) it lives in. */
+data class SessionFolder(
+    val id: String,
+    val name: String,
+    val scopeKey: String,
+    val parentId: String?,
+    val sessionIds: List<String>,
+)
+
+/** OpenChamber's sidebar structure: projects in its order, plus folders. Empty folders list on plain opencode. */
+data class Workspace(
+    val projects: List<WorkspaceProject>,
+    val folders: List<SessionFolder>,
+    /** Root directory OpenChamber puts standalone chats under (…/chats), when known. */
+    val chatsRoot: String? = null,
+    val supportsFolders: Boolean = false,
+)

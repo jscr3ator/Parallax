@@ -27,4 +27,13 @@ class SecurityPolicyTest {
             assertFalse(host, privateHttpHost(host))
         }
     }
+
+    @org.junit.Test
+    fun bareAddressesUseHttpOnlyOnPrivateNetworks() {
+        assertEquals("http://10.0.0.177:3080", normalizeUrl("10.0.0.177:3080"))
+        assertEquals("http://192.168.1.20:4096", normalizeUrl("192.168.1.20:4096/"))
+        assertEquals("http://100.120.41.52:4096", normalizeUrl("100.120.41.52:4096"))
+        assertEquals("http://localhost:3000", normalizeUrl("localhost:3000"))
+        assertEquals("https://pi.example.com", normalizeUrl("pi.example.com"))
+    }
 }

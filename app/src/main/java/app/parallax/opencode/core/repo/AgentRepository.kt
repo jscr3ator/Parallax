@@ -60,6 +60,15 @@ interface AgentRepository {
     suspend fun interrupt(sessionId: String)
     suspend fun renameSession(sessionId: String, title: String)
     suspend fun deleteSession(sessionId: String)
+    /** Archive (or restore) a chat on the server — the same archive OpenChamber shows. */
+    suspend fun archiveSession(sessionId: String, archived: Boolean = true)
+
+    /** Projects and folders as OpenChamber organizes them (falls back to opencode projects). */
+    suspend fun workspace(): app.parallax.opencode.core.model.Workspace
+    /** File a chat into an OpenChamber folder ([folderId] null = take it out of its folder). Synced to every OC client. */
+    suspend fun moveToFolder(sessionId: String, scopeKey: String, folderId: String?, fromFolderId: String?)
+    /** Create a folder in a project/chats scope; returns its id. */
+    suspend fun createFolder(scopeKey: String, name: String): String
     suspend fun setSessionModel(sessionId: String, model: ModelRef)
     suspend fun markViewed(sessionId: String)
 

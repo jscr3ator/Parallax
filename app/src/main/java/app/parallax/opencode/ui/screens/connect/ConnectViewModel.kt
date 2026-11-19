@@ -90,5 +90,8 @@ class ConnectViewModel(private val repository: AgentRepository) : ViewModel() {
 /** Accepts "192.168.1.5:4096", "host:3000/" or a full URL; returns an origin with a scheme and no trailing slash. */
 internal fun normalizeUrl(raw: String): String {
     val t = raw.trim().trimEnd('/')
-    return if ("://" in t) t else "https://$t"
+    if ("://" in t) return t
+    // Private addresses (home Wi-Fi, Tailscale, localhost) serve plain http; public hostnames get https.
+    val host = t.substringBefore('/').substringBeforeLast(':').trim('[', ']')
+    return if (app.parallax.opencode.core.net.privateHttpHost(host)) "http://$t" else "https://$t"
 }

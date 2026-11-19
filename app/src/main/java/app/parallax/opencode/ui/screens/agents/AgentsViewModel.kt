@@ -57,6 +57,45 @@ class AgentsViewModel(private val repository: AgentRepository) : ViewModel() {
         _error.value = (e as? RepoException)?.message ?: e.message ?: "Something went wrong"
     }
 
+    /** opencode projects, for naming groups the way OpenChamber does. */
+    private val _projects = MutableStateFlow<List<app.parallax.opencode.core.model.ProjectInfo>>(emptyList())
+    val projects: StateFlow<List<app.parallax.opencode.core.model.ProjectInfo>> = _projects.asStateFlow()
+    init { viewModelScope.launch { _projects.value = runCatching { repository.projects() }.getOrDefault(emptyList()) } }
+
+    /** OpenChamber projects + folders; refreshed on pull, after edits and every 20 s (other OC clients may change them). */
+    private val _workspace = MutableStateFlow(app.parallax.opencode.core.model.Workspace(emptyList(), emptyList()))
+    val workspace: StateFlow<app.parallax.opencode.core.model.Workspace> = _workspace.asStateFlow()
+    fun reloadWorkspace() = viewModelScope.launch {
+        runCatching { repository.workspace() }.onSuccess { _workspace.value = it }
+    }
+    init {
+        viewModelScope.launch {
+            while (true) { runCatching { repository.workspace() }.onSuccess { _workspace.value = it }; kotlinx.coroutines.delay(20_000) }
+        }
+    }
+
+    fun moveToFolder(session: AgentSession, folderId: String?) = viewModelScope.launch {
+        val ws = _workspace.value
+        val scope = scopeFor(session, ws)
+        val from = ws.folders.firstOrNull { it.scopeKey.trimEnd('/') == scope.trimEnd('/') && session.id in it.sessionIds }?.id
+        try { repository.moveToFolder(session.id, scope, folderId, from); _workspace.value = repository.workspace() } catch (e: Throwable) { fail(e) }
+    }
+
+    fun newFolderAndMove(session: AgentSession, name: String) = viewModelScope.launch {
+        val ws = _workspace.value
+        val scope = scopeFor(session, ws)
+        val from = ws.folders.firstOrNull { it.scopeKey.trimEnd('/') == scope.trimEnd('/') && session.id in it.sessionIds }?.id
+        try {
+            val id = repository.createFolder(scope, name.trim())
+            repository.moveToFolder(session.id, scope, id, from)
+            _workspace.value = repository.workspace()
+        } catch (e: Throwable) { fail(e) }
+    }
+
+    fun archive(id: String) = viewModelScope.launch {
+        try { repository.archiveSession(id) } catch (e: Throwable) { fail(e) }
+    }
+
     fun delete(id: String) = viewModelScope.launch {
         try { repository.deleteSession(id) } catch (e: Throwable) { fail(e) }
     }
@@ -69,6 +108,7 @@ class AgentsViewModel(private val repository: AgentRepository) : ViewModel() {
         _refreshing.value = true
         try {
             repository.refresh()
+            runCatching { repository.workspace() }.onSuccess { _workspace.value = it }
         } catch (e: Throwable) { fail(e) }
         _refreshing.value = false
     }
@@ -81,4 +121,4 @@ class AgentsViewModel(private val repository: AgentRepository) : ViewModel() {
 }
 
 /** Survives tab switches within a process. */
-private var rememberedShowAll = false
+private var rememberedShowAll = true

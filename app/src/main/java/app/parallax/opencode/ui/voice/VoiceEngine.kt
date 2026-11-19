@@ -70,6 +70,7 @@ class VoiceEngine(context: Context) {
                 tts?.setSpeechRate(1.10f)
                 tts?.setPitch(1.0f)
                 loadVoices()
+                warmUp()
                 queued.toMap().forEach { (id, text) -> submitQueued(id, text) }
             } else {
                 queued.keys.toList().forEach(::utteranceFinished)
@@ -128,6 +129,13 @@ class VoiceEngine(context: Context) {
     /** Run [onDone] once everything queued with [enqueue] has been spoken (immediately if nothing is queued). */
     fun whenQueueDrained(onDone: () -> Unit) {
         if (queued.isEmpty()) { _speaking.value = false; onDone() } else onQueueDrained = onDone
+    }
+
+    /** Synthesize a silent utterance so the (network) voice is connected before the first real reply. */
+    fun warmUp() {
+        if (!ttsReady) return
+        val params = android.os.Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 0f) }
+        tts?.speak(" ", TextToSpeech.QUEUE_ADD, params, "warm-" + UUID.randomUUID())
     }
 
     /** Pick the most natural-sounding voice: user choice first, else the highest-quality installed voice. */
@@ -215,6 +223,8 @@ class VoiceEngine(context: Context) {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            // On-device recognition when available: no network round trip, noticeably faster.
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
             // End the turn quickly once you stop talking.
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 520L)

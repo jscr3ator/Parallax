@@ -125,6 +125,7 @@ internal fun mapSession(json: JsonObject, serverId: String, eventTime: Long? = n
         unread = outcome != null && updated > (viewed ?: 0L),
         error = null,
         fromParallax = json.objectAt("metadata")?.get("parallax")?.toString() == "true",
+        projectId = json.string("projectID"),
     )
 }
 

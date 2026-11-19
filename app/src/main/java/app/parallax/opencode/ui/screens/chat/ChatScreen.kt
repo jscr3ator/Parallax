@@ -158,7 +158,10 @@ fun ChatScreen(
         prompt = ""
     }
     val modelNames = remember(models) { models.associate { it.ref.key to it.name } }
-    val recent = sessions.filter { it.fromParallax && it.parentId == null }.sortedByDescending { it.updatedAt }
+    // Phone chats, plus anything live from elsewhere (an agent you started in OpenChamber shows up here while it runs).
+    val recent = sessions.filter {
+        it.parentId == null && (it.fromParallax || it.state == RunState.RUNNING || it.state == RunState.NEEDS_YOU)
+    }.sortedWith(compareByDescending<app.parallax.opencode.core.model.AgentSession> { it.state == RunState.RUNNING || it.state == RunState.NEEDS_YOU }.thenByDescending { it.updatedAt })
     val serverName = activeServer?.name ?: "Parallax"
     val status = when {
         needsYou -> "Something needs your OK"

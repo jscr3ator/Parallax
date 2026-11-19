@@ -509,7 +509,11 @@ fun SessionListRow(
         RunState.RUNNING -> session.activity ?: "Working…"
         RunState.NEEDS_YOU -> "Waiting for your OK"
         RunState.FAILED -> session.error ?: "Something went wrong"
-        else -> "$modelName · ${dirLeaf(session.directory)}"
+        else -> listOfNotNull(
+            modelName.takeIf { it.isNotBlank() && it != "No model" },
+            // OpenChamber chats live in throwaway session-<uuid> folders: never show that as a place.
+            dirLeaf(session.directory).takeUnless { app.parallax.opencode.ui.screens.agents.isOpenChamberChat(session.directory) },
+        ).joinToString(" · ").ifBlank { "Chat" }
     }
     Row(
         modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.md)).combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(vertical = 10.dp, horizontal = Space.xs),
@@ -536,7 +540,7 @@ fun SessionListRow(
                 Icon(Icons.Rounded.Checklist, null, tint = c.textFaint, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(preview, style = ParallaxTheme.type.body.copy(fontSize = 15.sp), color = c.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                if (session.unread && session.state != RunState.RUNNING) {
+                if (session.unread && session.state != RunState.RUNNING && now - session.updatedAt < 24 * 3_600_000L) {
                     Spacer(Modifier.width(Space.sm))
                     Box(Modifier.size(10.dp).clip(CircleShape).background(c.accent))
                 }

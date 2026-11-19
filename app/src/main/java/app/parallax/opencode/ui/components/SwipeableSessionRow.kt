@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -42,13 +42,10 @@ internal fun SwipeableSessionRow(
     modifier: Modifier = Modifier,
 ) {
     val c = ParallaxTheme.colors
-    var confirmDelete by remember(session.id) { mutableStateOf(false) }
+    // Swipe left archives (synced with OpenChamber, restorable there) — no confirmation needed.
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { v ->
-            if (v == SwipeToDismissBoxValue.EndToStart) {
-                confirmDelete = true
-                false
-            } else false
+            if (v == SwipeToDismissBoxValue.EndToStart) { onDelete(); true } else false
         },
     )
     SwipeToDismissBox(
@@ -60,37 +57,20 @@ internal fun SwipeableSessionRow(
                 Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(Radius.md))
-                    .background(c.failedWash)
+                    .background(c.raised)
                     .padding(end = Space.lg),
                 contentAlignment = Alignment.CenterEnd,
             ) {
-                Icon(Icons.Rounded.Delete, contentDescription = null, tint = c.failed)
+                Icon(Icons.Rounded.Archive, contentDescription = null, tint = c.textMuted)
             }
         },
         content = {
             SessionListRow(
                 session = session, modelName = modelName, onClick = onOpen, onLongClick = onRename,
                 modifier = Modifier.background(c.bg).semantics {
-                    customActions = listOf(CustomAccessibilityAction("Delete chat") { confirmDelete = true; true })
+                    customActions = listOf(CustomAccessibilityAction("Archive chat") { onDelete(); true })
                 },
             )
         },
     )
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete session?", style = ParallaxTheme.type.title, color = c.text) },
-            text = { Text("“${session.title.ifBlank { "Untitled chat" }}” will be removed from the server.", style = ParallaxTheme.type.bodySmall, color = c.textMuted) },
-            confirmButton = {
-                TextButton(onClick = { confirmDelete = false; onDelete() }) {
-                    Text("Delete", style = ParallaxTheme.type.label, color = c.failed)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) {
-                    Text("Cancel", style = ParallaxTheme.type.label, color = c.textMuted)
-                }
-            },
-        )
-    }
 }
