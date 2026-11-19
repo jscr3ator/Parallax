@@ -10,12 +10,12 @@ A pocket remote for OpenCode. Talk to your coding agents, queue follow-ups, and 
 
 IOS is on the roadmap!
 
-**Web.** Use Parallax from any browser: phone, tablet or laptop. On the computer or Pi that runs your server (Node 18+):
+**Web.** Use Parallax from any browser: phone, tablet or laptop. On any computer on your network with Node 18+:
 
 ```bash
-npx github:jscr3ator/Parallax --backend http://localhost:4096
+git clone --depth 1 https://github.com/jscr3ator/Parallax && node Parallax/web/server.mjs --backend http://10.0.0.177:3080
 ```
 
-Use `--backend http://localhost:3080` for OpenChamber. Open the address it prints on any device on your network and sign in with your opencode or OpenChamber password. From a clone, `node web/server.mjs` does the same. Add `--port` to change the port (default 8787). The web server stores nothing: chats, projects and folders stay on your server, and the browser keeps only its sign-in token.
+Point `--backend` at your OpenChamber (port 3080) or opencode server (port 4096; the default is `http://localhost:4096`). Open the address it prints on any device and sign in with your OpenChamber or opencode password. `--port` changes the port (default 8787). It has no dependencies, so there's nothing to install. The web server stores nothing: chats, projects and folders stay on your server, and the browser keeps only its sign-in token.
 
 **Build.** With JDK 21 and the Android SDK installed, run `./gradlew assembleDebug`.
