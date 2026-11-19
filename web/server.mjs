@@ -13,6 +13,8 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import fs from "node:fs";
+import dns from "node:dns/promises";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,13 +31,16 @@ if (args.includes("--help") || args.includes("-h")) {
 
   --backend <url>  opencode or OpenChamber server   (env PARALLAX_BACKEND, default http://127.0.0.1:4096)
   --port <n>       port to serve on                 (env PARALLAX_WEB_PORT, default 8787)
-  --host <addr>    address to listen on             (default 0.0.0.0, use 127.0.0.1 for this machine only)`);
+  --host <addr>    address to listen on             (default 0.0.0.0, use 127.0.0.1 for this machine only)
+  --allow-any      let the sign-in page connect to public addresses too (default: your network,
+                   Tailscale and the --backend server only)`);
   process.exit(0);
 }
 
 let backendRaw = flag("backend", process.env.PARALLAX_BACKEND || "http://127.0.0.1:4096");
 if (!/^https?:\/\//i.test(backendRaw)) backendRaw = `http://${backendRaw}`;
 const backend = new URL(backendRaw);
+const allowAny = args.includes("--allow-any") || process.env.PARALLAX_ALLOW_ANY === "1";
 const port = Number(flag("port", process.env.PARALLAX_WEB_PORT || 8787));
 const host = flag("host", "0.0.0.0");
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
@@ -81,12 +86,59 @@ function send(res, code, text) {
   res.end(text);
 }
 
-function proxy(req, res) {
+// ---- which servers the sign-in page may reach ----------------------------------------------
+// The browser picks a server with the X-Parallax-Backend header (its origin). The default
+// --backend is always allowed; others must resolve to a private, LAN or Tailscale address
+// unless --allow-any is set. The connection is pinned to the checked IP (no DNS rebinding).
+
+function isPrivateIp(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split(".").map(Number);
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254);
+  }
+  const v = ip.toLowerCase();
+  if (v.startsWith("::ffff:")) return isPrivateIp(v.slice(7));
+  return v === "::1" || v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe80:");
+}
+
+class TargetError extends Error { constructor(msg, code = 403) { super(msg); this.code = code; } }
+
+async function resolveTarget(raw) {
+  if (!raw) return { url: backend, address: null };
+  let url;
+  try { url = new URL(raw); } catch { throw new TargetError("That server address isn't valid.", 400); }
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new TargetError("Use an http:// or https:// server address.", 400);
+  url = new URL(url.origin);
+  if (url.origin === backend.origin) return { url, address: null };
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  let addresses;
+  try {
+    addresses = net.isIP(host) ? [host] : (await dns.lookup(host, { all: true })).map((a) => a.address);
+  } catch {
+    throw new TargetError(`Can't find ${url.host}. Check the address.`, 502);
+  }
+  if (!allowAny && !addresses.every(isPrivateIp)) {
+    throw new TargetError(`${url.host} is a public address. Restart Parallax web with --allow-any to connect to it.`);
+  }
+  return { url, address: addresses[0] };
+}
+
+async function proxy(req, res) {
+  let target;
+  try {
+    target = await resolveTarget(req.headers["x-parallax-backend"]);
+  } catch (e) {
+    res.writeHead(e.code || 400, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ error: e.message }));
+  }
+  const backend = target.url;
   const lib = backend.protocol === "https:" ? https : http;
   const headers = { ...req.headers };
   delete headers.host;
   delete headers.cookie; // credentials travel only in Authorization
   delete headers.connection;
+  delete headers["x-parallax-backend"];
   // Backends check Origin on writes; present ourselves as same-origin to the backend.
   if (headers.origin) headers.origin = backend.origin;
   if (headers.referer) headers.referer = backend.origin + "/";
@@ -98,6 +150,7 @@ function proxy(req, res) {
       method: req.method,
       path: req.url,
       headers: { ...headers, host: backend.host },
+      ...(target.address ? { lookup: (_h, opts, cb) => opts?.all ? cb(null, [{ address: target.address, family: net.isIP(target.address) }]) : cb(null, target.address, net.isIP(target.address)) } : {}),
     },
     (up) => {
       const out = { ...up.headers };
@@ -127,7 +180,7 @@ const server = http.createServer((req, res) => {
   const pathname = new URL(req.url, "http://x").pathname;
   if (pathname === "/_px/info") {
     res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ backend: backend.host }));
+    return res.end(JSON.stringify({ backend: backend.origin, allowAny }));
   }
   if (PROXIED.test(pathname)) return proxy(req, res);
   if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "Method not allowed");
@@ -147,7 +200,8 @@ server.listen(port, host, () => {
   console.log(`\n  Parallax web  →  backend ${backend.origin}\n`);
   console.log(`  On this computer:  http://localhost:${port}`);
   if (host === "0.0.0.0") for (const ip of lan) console.log(`  On your network:   http://${ip}:${port}`);
-  console.log(`\n  Sign in with your opencode or OpenChamber password. Ctrl+C to stop.`);
+  console.log(`\n  Sign in with your opencode or OpenChamber password, or enter another server's address`);
+  console.log(`  (or an OpenChamber connect link) on the sign-in page.${allowAny ? "" : " Public addresses need --allow-any."} Ctrl+C to stop.`);
   if (host === "0.0.0.0" && fs.existsSync("/usr/sbin/ufw")) {
     console.log(`  Blocked on other devices? Allow the port once: sudo ufw allow from ${(lan[0] || "10.0.0.1").replace(/\.\d+$/, ".0")}/24 to any port ${port} proto tcp`);
   }

@@ -13,9 +13,9 @@ IOS is on the roadmap!
 **Web.** Use Parallax from any browser: phone, tablet or laptop. On any computer on your network with Node 18+:
 
 ```bash
-git clone --depth 1 https://github.com/jscr3ator/Parallax && node Parallax/web/server.mjs --backend http://10.0.0.177:3080
+git clone --depth 1 https://github.com/jscr3ator/Parallax && node Parallax/web/server.mjs
 ```
 
-Point `--backend` at your OpenChamber (port 3080) or opencode server (port 4096; the default is `http://localhost:4096`). Open the address it prints on any device and sign in with your OpenChamber or opencode password. `--port` changes the port (default 8787). It has no dependencies, so there's nothing to install. The web server stores nothing: chats, projects and folders stay on your server, and the browser keeps only its sign-in token.
+Open the address it prints on any device. On the sign-in page, enter your OpenChamber or opencode server address (a Raspberry Pi at `10.0.0.177:3080`, a Tailscale name, a tunnel) with its password, or paste an OpenChamber connect link from Settings → Remote Instances → Add a device. Servers on your network and Tailscale work out of the box. Start it with `--allow-any` to reach public addresses, and with `--backend <url>` to change the server used when the address is left empty. `--port` changes the port (default 8787). It has no dependencies. The web server stores nothing: chats, projects and folders stay on your server, and the browser keeps only its sign-in token.
 
 **Build.** With JDK 21 and the Android SDK installed, run `./gradlew assembleDebug`.

@@ -165,7 +165,7 @@ const session = {
 
 const S = {
   auth: session.get(),           // { kind: "opencode"|"openchamber", header: string|null, label }
-  backend: "",
+  defaultBackend: "",            // the server Parallax web was started with (--backend)
   conn: "connecting",            // connecting | live | offline
   sessions: [],
   workspace: { projects: [], folders: [], chatsRoot: null, supportsFolders: false },
@@ -191,6 +191,7 @@ class ApiError extends Error { constructor(msg, code) { super(msg); this.code = 
 function authHeaders(extra = {}) {
   const hd = { Accept: "application/json", ...extra };
   if (S.auth?.header) hd.Authorization = S.auth.header;
+  if (S.auth?.backend) hd["X-Parallax-Backend"] = S.auth.backend;
   return hd;
 }
 
@@ -226,32 +227,103 @@ function deviceKey() {
   return k;
 }
 
-async function signIn(password) {
+const deviceFields = () => ({
+  // OpenChamber pairing links accept only "mobile" and "desktop" clients.
+  clientKind: /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) ? "mobile" : "desktop",
+  clientLabel: "Parallax web", deviceName: "Browser", devicePlatform: "web", deviceModel: navigator.userAgent.slice(0, 80), appVersion: "web-0.2", dedupeKey: deviceKey(),
+});
+
+function isPrivateHost(host) {
+  const h = host.replace(/^\[|\]$/g, "").toLowerCase();
+  if (h === "localhost" || !h.includes(".") || /\.(local|lan|home|internal|ts\.net)$/.test(h)) return true;
+  const m = h.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
+  if (m) {
+    const [a, b] = [+m[1], +m[2]];
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254);
+  }
+  return h === "::1" || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80");
+}
+
+/** "10.0.0.177:3080" → "http://10.0.0.177:3080"; "oc.example.com" → "https://oc.example.com". Null = the default server. */
+function normalizeAddress(raw) {
+  let v = String(raw || "").trim().replace(/\/+$/, "");
+  if (!v) return null;
+  if (!/^https?:\/\//i.test(v)) {
+    const host = v.split("/")[0].replace(/:\d+$/, "");
+    v = (isPrivateHost(host) ? "http://" : "https://") + v;
+  }
+  let url;
+  try { url = new URL(v); } catch { throw new ApiError("That server address isn't valid."); }
+  return url.origin === S.defaultBackend ? null : url.origin;
+}
+
+const hostOf = (origin) => { try { return new URL(origin).host; } catch { return origin || ""; } };
+const serverLabel = () => hostOf(S.auth?.backend || S.defaultBackend) || "Server";
+
+async function signIn(password, backend) {
+  const bh = backend ? { "X-Parallax-Backend": backend } : {};
   // 1) OpenChamber: exchange the UI password for a per-device token (the password is never stored).
+  let reachError = null;
   try {
     const r = await fetch("/auth/session", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        password, trustDevice: true, issueClientToken: true,
-        clientKind: "web", clientLabel: "Parallax web", deviceName: "Browser",
-        devicePlatform: "web", deviceModel: navigator.userAgent.slice(0, 80), appVersion: "web-0.1", dedupeKey: deviceKey(),
-      }),
+      headers: { "Content-Type": "application/json", Accept: "application/json", ...bh },
+      body: JSON.stringify({ password, trustDevice: true, issueClientToken: true, ...deviceFields() }),
     });
     const j = await r.json().catch(() => null);
-    if (j?.clientToken) return { kind: "openchamber", header: `Bearer ${j.clientToken}` };
-    if (r.ok && j && (j.authenticated === true || j.disabled)) return { kind: "openchamber", header: null };
+    if (j?.clientToken) return { kind: "openchamber", header: `Bearer ${j.clientToken}`, backend };
+    if (r.ok && j && (j.authenticated === true || j.disabled)) return { kind: "openchamber", header: null, backend };
+    if ([400, 403, 502].includes(r.status) && typeof j?.error === "string") reachError = j.error;
   } catch {}
+  if (reachError) throw new ApiError(reachError);
   // 2) Plain opencode: HTTP Basic with user "opencode".
   const header = password ? "Basic " + btoa(unescape(encodeURIComponent(`opencode:${password}`))) : null;
-  const r = await fetch("/api/info", { headers: header ? { Authorization: header, Accept: "application/json" } : { Accept: "application/json" } });
+  const auth = header ? { Authorization: header } : {};
+  const r = await fetch("/api/info", { headers: { Accept: "application/json", ...auth, ...bh } });
   if (r.status === 401) throw new ApiError(password ? "Wrong password." : "This server needs a password.", 401);
-  if (r.status === 502) throw new ApiError((await r.json().catch(() => null))?.error || "Can't reach your server.");
+  if (r.status >= 400 && r.status !== 404) {
+    const msg = (await r.json().catch(() => null))?.error;
+    if (msg) throw new ApiError(msg);
+  }
   if (!r.ok) throw new ApiError(`Server error ${r.status}`);
   // An OpenChamber with no UI password also answers here; its settings route tells them apart.
-  const oc = await fetch("/api/config/settings", { headers: header ? { Authorization: header } : {} })
+  const oc = await fetch("/api/config/settings", { headers: { ...auth, ...bh } })
     .then((x) => x.ok && (x.headers.get("content-type") || "").includes("json")).catch(() => false);
-  return { kind: oc ? "openchamber" : "opencode", header };
+  return { kind: oc ? "openchamber" : "opencode", header, backend };
+}
+
+/**
+ * OpenChamber pairing link (Settings → Remote Instances → Add a device, or `openchamber connect-url`):
+ * openchamber://connect?v=2&p=<base64url(JSON)>. Redeems the one-time secret on the first reachable candidate.
+ */
+async function redeemLink(link) {
+  let payload;
+  try {
+    const p = new URL(link.trim()).searchParams.get("p");
+    const b64 = p.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((p.length + 3) % 4);
+    payload = JSON.parse(decodeURIComponent(escape(atob(b64))));
+  } catch {
+    throw new ApiError("That isn't an OpenChamber connect link.");
+  }
+  const candidates = (payload.candidates || []).filter((c) => c.url && c.type !== "relay").sort((a, b) => (b.priority || 0) - (a.priority || 0));
+  if (!candidates.length) throw new ApiError("This link only works through OpenChamber's relay. Create one for your home network or a tunnel instead.");
+  let last = null;
+  for (const c of candidates) {
+    let origin;
+    try { origin = new URL(c.url).origin; } catch { continue; }
+    const backend = origin === S.defaultBackend ? null : origin;
+    try {
+      const r = await fetch("/api/client-auth/pairing/redeem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json", ...(backend ? { "X-Parallax-Backend": backend } : {}) },
+        body: JSON.stringify({ pairingId: payload.pairingId, secret: payload.secret, ...deviceFields() }),
+      });
+      const j = await r.json().catch(() => null);
+      if (j?.clientToken) return { kind: "openchamber", header: `Bearer ${j.clientToken}`, backend, label: payload.label || j.server?.label || null };
+      last = (typeof j?.error === "string" ? j.error : j?.error?.message) || (r.status === 410 || r.status === 404 ? "This link expired or was already used. Create a new one." : `Pairing failed (${r.status}).`);
+    } catch (e) { last = e.message; }
+  }
+  throw new ApiError(last || "Couldn't reach the server in that link.");
 }
 
 function signOut(reason) {
@@ -537,17 +609,34 @@ function render() {
 }
 
 function renderConnect() {
-  let busy = false;
-  const pw = h("input.field", { type: "password", placeholder: "Password", autocomplete: "current-password", autofocus: true });
+  let busy = false, linkMode = false;
+  const addr = h("input.field", { type: "text", inputmode: "url", autocapitalize: "off", spellcheck: "false",
+    placeholder: hostOf(S.defaultBackend) || "Server address", value: store.get("lastBackend", "") ? hostOf(store.get("lastBackend", "")) : "" });
+  const pw = h("input.field", { type: "password", placeholder: "Password", autocomplete: "current-password" });
+  const link = h("textarea.field.hidden", { rows: 3, placeholder: "openchamber://connect?…", style: "resize:none" });
   const remember = h("input", { type: "checkbox", checked: true, style: "accent-color:var(--accent)" });
   const err = h("div.err");
   const btn = h("button.primary", { type: "submit" }, "Connect");
+  const toggle = h("button.hint", { type: "button", style: "text-decoration:underline;align-self:center", on: { click: () => {
+    linkMode = !linkMode;
+    addr.classList.toggle("hidden", linkMode); pw.classList.toggle("hidden", linkMode); link.classList.toggle("hidden", !linkMode);
+    toggle.textContent = linkMode ? "Use an address and password instead" : "Have an OpenChamber connect link?";
+    err.textContent = "";
+    (linkMode ? link : addr).focus();
+  } } }, "Have an OpenChamber connect link?");
   const form = h("form", { on: { submit: async (e) => {
     e.preventDefault();
     if (busy) return;
     busy = true; btn.disabled = true; btn.textContent = "Connecting…"; err.textContent = "";
     try {
-      const auth = await signIn(pw.value);
+      let auth;
+      if (linkMode) {
+        auth = await redeemLink(link.value);
+      } else {
+        const backend = normalizeAddress(addr.value);
+        auth = await signIn(pw.value, backend);
+      }
+      store.set("lastBackend", auth.backend || null);
       session.set(auth, remember.checked);
       S.auth = auth;
       boot();
@@ -555,23 +644,28 @@ function renderConnect() {
       err.textContent = ex.message;
       busy = false; btn.disabled = false; btn.textContent = "Connect";
     }
-  } } }, pw, btn, err,
+  } } }, addr, pw, link, btn, err, toggle,
     h("label.hint", { style: "display:flex;gap:8px;align-items:center;justify-content:center" }, remember, "Stay signed in on this device"));
   app.append(h("div.connect", h("div.connect-card",
     mascot(88, "parallax"),
     h("h1", "Parallax"),
     h("p", "Your agents, in any browser."),
-    h("p.hint", { id: "backendHint" }, S.backend ? `Server: ${S.backend}` : ""),
     form,
-    h("p.hint", "Use your opencode server password or your OpenChamber UI password. Leave it empty if the server has none."),
+    h("p.hint", { id: "backendHint" }, connectHint()),
   )));
-  setTimeout(() => pw.focus(), 50);
+  setTimeout(() => (addr.value ? pw : addr).focus(), 50);
+}
+
+function connectHint() {
+  const def = hostOf(S.defaultBackend);
+  return `Any OpenChamber or opencode server: your Pi, a Tailscale name, or a tunnel. Leave the address empty to use ${def || "the default server"}.` +
+    (S.allowAny ? "" : " Public addresses need --allow-any.");
 }
 
 function renderSideTop() {
   const el = $("#sideTop");
   if (!el) return;
-  const label = S.backend || "Server";
+  const label = serverLabel();
   const status = S.conn === "live" ? "Live" : S.conn === "offline" ? "Reconnecting…" : "Connecting…";
   const avatar = h("button.avatar", { title: "Menu", on: { click: (e) => settingsMenu(e.currentTarget) } }, S.auth.kind === "openchamber" ? "OC" : "O");
   el.replaceChildren(h("div.side-top", avatar,
@@ -753,7 +847,7 @@ function homeView() {
   return h("div.home", { style: "min-height:100%" },
     mascot(104, "parallax", { live: S.conn === "live" }),
     h("h2", "What should we build?"),
-    h("p", `${S.auth.kind === "openchamber" ? "OpenChamber" : "opencode"} · ${S.backend}`),
+    h("p", `${S.auth.kind === "openchamber" ? "OpenChamber" : "opencode"} · ${serverLabel()}`),
     h("div.chips", ideas.map((t) => h("button.pill", { on: { click: () => { const ta = $("#prompt"); ta.value = t; ta.dispatchEvent(new Event("input")); ta.focus(); } } }, t))));
 }
 
@@ -908,7 +1002,7 @@ function folderMenu(anchor, s) {
 function settingsMenu(anchor) {
   const theme = document.documentElement.dataset.theme || "";
   const items = [
-    { label: `${S.auth.kind === "openchamber" ? "OpenChamber" : "opencode"} · ${S.backend}` },
+    { label: `${S.auth.kind === "openchamber" ? "OpenChamber" : "opencode"} · ${serverLabel()}` },
     { icon: "refresh", text: "Refresh", run: () => refreshAll().then(() => toast("Up to date")).catch((e) => toast(e.message)) },
     { icon: "moon", text: theme === "dark" ? "Light mode" : theme === "light" ? "Match system" : "Dark mode", run: () => {
       const next = theme === "dark" ? "light" : theme === "light" ? "" : "dark";
@@ -980,6 +1074,12 @@ setInterval(() => { if (S.auth && !document.hidden) renderList(); }, 60000); // 
 const savedTheme = store.get("theme", null);
 if (savedTheme) document.documentElement.dataset.theme = savedTheme;
 
-fetch("/_px/info").then((r) => r.json()).then((j) => { S.backend = j.backend || ""; const el = $("#backendHint"); if (el) el.textContent = `Server: ${S.backend}`; if (S.auth) renderSideTop(); }).catch(() => {});
+fetch("/_px/info").then((r) => r.json()).then((j) => {
+  S.defaultBackend = j.backend ? new URL(j.backend).origin : "";
+  S.allowAny = !!j.allowAny;
+  const el = $("#backendHint"); if (el) el.textContent = connectHint();
+  const a = $(".connect input[type=text]"); if (a && !a.value) a.placeholder = hostOf(S.defaultBackend);
+  if (S.auth) renderSideTop();
+}).catch(() => {});
 
 if (S.auth) boot(); else render();
